@@ -20,11 +20,39 @@
   <canvas id="graph"></canvas>
   <div id="bandRow" class="band-row"></div>
   <section class="controls">
-    <div class="left" id="bandEdit">
+    <div class="left">
       <div id="selLabel" class="sel-label"></div>
-      <label class="num-field">Freq <input id="inFreq" type="number" min="20" max="20000" step="1"></label>
-      <label class="num-field">Gain <input id="inGain" type="number" min="-15" max="15" step="0.5"></label>
-      <label class="num-field">Q <input id="inQ" type="number" min="0.1" max="18" step="0.1"></label>
+      <div id="typeRow" class="type-row"></div>
+      <div class="knob-group">
+        <div class="knob-cell" id="cellFreq">
+          <canvas class="knob" id="knobFreq"></canvas>
+          <div class="kval" id="valFreq"></div>
+          <div class="klbl">Freq</div>
+        </div>
+        <div class="knob-cell" id="cellGain">
+          <canvas class="knob" id="knobGain"></canvas>
+          <div class="kval" id="valGain"></div>
+          <div class="klbl">Gain</div>
+        </div>
+        <div class="knob-cell" id="cellQ">
+          <canvas class="knob" id="knobQ"></canvas>
+          <div class="kval" id="valQ"></div>
+          <div class="klbl">Q</div>
+        </div>
+      </div>
+    </div>
+    <div class="right">
+      <button id="adaptQ" class="toggle">Adapt. Q</button>
+      <div class="knob-cell">
+        <canvas class="knob" id="knobScale"></canvas>
+        <div class="kval" id="valScale"></div>
+        <div class="klbl">Scale</div>
+      </div>
+      <div class="knob-cell">
+        <canvas class="knob" id="knobOut"></canvas>
+        <div class="kval" id="valOut"></div>
+        <div class="klbl">Gain</div>
+      </div>
     </div>
   </section>
   <div id="status" class="status"></div>

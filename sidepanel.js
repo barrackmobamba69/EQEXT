@@ -2,6 +2,8 @@
 
 // Side panel UI. Talks to background (capture start) and directly to the
 // offscreen document (everything else) via extension-wide runtime messages.
+// The response curve is computed locally from the same shared band->filter
+// mapping the offscreen doc uses, so it always matches the audible EQ.
 
 /* ---------------- state ---------------- */
 
@@ -133,6 +135,14 @@ function selectBand(i) {
   updateBandUI();
 }
 
+function setGlobals(patch) {
+  Object.assign(state.globals, patch);
+  markDirty(true); // scale/adaptive Q reshape the curve and move nodes
+  pushGlobals();
+  scheduleSave();
+  updateGlobalUI();
+}
+
 /* ---------------- header / status ---------------- */
 
 const powerBtn = document.getElementById('power');
@@ -156,6 +166,25 @@ powerBtn.addEventListener('click', () => {
   else startCapture();
 });
 
+/* ---------------- filter-type icons ---------------- */
+
+const TYPE_PATHS = {
+  highpass:  'M2 12 C7 12 7 3 12 3 L22 3',
+  lowshelf:  'M2 4 L8 4 C12 4 12 9 16 9 L22 9',
+  peaking:   'M2 8 L6 8 C9 8 9 3 12 3 C15 3 15 8 18 8 L22 8',
+  notch:     'M2 6 L7 6 C10 6 10 12 12 12 C14 12 14 6 17 6 L22 6',
+  bandpass:  'M2 12 C8 12 8 4 12 4 C16 4 16 12 22 12',
+  allpass:   'M2 7 L22 7 M9 12 C12 12 12 2 15 2',
+  highshelf: 'M2 9 L8 9 C12 9 12 4 16 4 L22 4',
+  lowpass:   'M2 3 L12 3 C17 3 17 12 22 12',
+};
+
+function typeIcon(typeId) {
+  return '<svg viewBox="0 0 24 15" width="24" height="15" aria-hidden="true" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="' + TYPE_PATHS[typeId] + '"/></svg>';
+}
+
 /* ---------------- band row ---------------- */
 
 const bandRowEl = document.getElementById('bandRow');
@@ -172,25 +201,15 @@ function buildBandRow() {
     num.title = 'Enable/disable band ' + (i + 1);
     num.addEventListener('click', (e) => {
       e.stopPropagation();
+      selectBand(i);
       setBand(i, { on: !state.bands[i].on });
     });
 
-    const sel = document.createElement('select');
-    sel.className = 'tsel';
-    for (const t of EQ.FILTER_TYPES) {
-      const opt = document.createElement('option');
-      opt.value = t.id;
-      opt.textContent = t.label;
-      sel.appendChild(opt);
-    }
-    sel.addEventListener('click', (e) => e.stopPropagation());
-    sel.addEventListener('change', () => {
-      selectBand(i);
-      setBand(i, { type: sel.value });
-    });
+    const icon = document.createElement('span');
+    icon.className = 'ticon';
 
     cell.appendChild(num);
-    cell.appendChild(sel);
+    cell.appendChild(icon);
     cell.addEventListener('click', () => selectBand(i));
     bandRowEl.appendChild(cell);
     cells.push(cell);
@@ -201,40 +220,181 @@ function updateBandRow() {
   cells.forEach((cell, i) => {
     cell.classList.toggle('sel', i === selected);
     cell.classList.toggle('on', state.bands[i].on);
-    cell.querySelector('.tsel').value = state.bands[i].type;
+    cell.querySelector('.ticon').innerHTML = typeIcon(state.bands[i].type);
   });
 }
 
-/* ---------------- selected-band edit ---------------- */
+/* ---------------- filter-type button row (selected band) ---------------- */
+
+const typeRowEl = document.getElementById('typeRow');
+const typeBtns = [];
+
+function buildTypeRow() {
+  EQ.FILTER_TYPES.forEach((t) => {
+    const btn = document.createElement('button');
+    btn.className = 'typeBtn';
+    btn.title = t.label;
+    btn.innerHTML = typeIcon(t.id);
+    btn.addEventListener('click', () => setBand(selected, { type: t.id }));
+    typeRowEl.appendChild(btn);
+    typeBtns.push(btn);
+  });
+}
+
+/* ---------------- rotary knobs ---------------- */
+
+class Knob {
+  constructor(canvasEl, opts) {
+    this.cv = canvasEl;
+    this.o = Object.assign({ min: 0, max: 1, log: false, bipolar: false, def: 0, fine: 0.15 }, opts);
+    this.value = this.o.def;
+    this.dragging = null;
+    this.cv.addEventListener('pointerdown', (e) => {
+      this.dragging = { y0: e.clientY, p0: this.norm(this.value) };
+      this.cv.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+    this.cv.addEventListener('pointermove', (e) => {
+      if (!this.dragging) return;
+      const dp = ((this.dragging.y0 - e.clientY) / 140) * (e.shiftKey ? this.o.fine : 1);
+      this.input(this.denorm(EQ.clamp(this.dragging.p0 + dp, 0, 1)));
+    });
+    this.cv.addEventListener('pointerup', () => { this.dragging = null; });
+    this.cv.addEventListener('pointercancel', () => { this.dragging = null; });
+    this.cv.addEventListener('dblclick', () => this.input(this.o.def));
+    this.cv.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const step = 0.04 * (e.shiftKey ? this.o.fine : 1);
+      const p = EQ.clamp(this.norm(this.value) + (e.deltaY < 0 ? step : -step), 0, 1);
+      this.input(this.denorm(p));
+    }, { passive: false });
+    this.draw();
+  }
+
+  norm(v) {
+    return this.o.log
+      ? Math.log(v / this.o.min) / Math.log(this.o.max / this.o.min)
+      : (v - this.o.min) / (this.o.max - this.o.min);
+  }
+  denorm(p) {
+    return this.o.log
+      ? this.o.min * Math.pow(this.o.max / this.o.min, p)
+      : this.o.min + p * (this.o.max - this.o.min);
+  }
+
+  input(v) {
+    this.set(v);
+    if (this.o.onInput) this.o.onInput(this.value);
+  }
+
+  set(v) {
+    this.value = EQ.clamp(v, this.o.min, this.o.max);
+    this.draw();
+  }
+
+  draw() {
+    const size = this.cv.clientWidth || 44;
+    const k = window.devicePixelRatio || 1;
+    if (this.cv.width !== Math.round(size * k)) {
+      this.cv.width = Math.round(size * k);
+      this.cv.height = Math.round(size * k);
+    }
+    const g = this.cv.getContext('2d');
+    g.setTransform(k, 0, 0, k, 0, 0);
+    g.clearRect(0, 0, size, size);
+    const c = size / 2;
+    const r = c - 4;
+    const a0 = 0.75 * Math.PI;
+    const a1 = 2.25 * Math.PI;
+    const ang = a0 + this.norm(this.value) * (a1 - a0);
+
+    g.lineCap = 'round';
+    g.lineWidth = 3;
+    g.strokeStyle = '#3d3d3d';
+    g.beginPath(); g.arc(c, c, r, a0, a1); g.stroke();
+
+    g.strokeStyle = '#ffb02e';
+    g.beginPath();
+    if (this.o.bipolar) {
+      const mid = (a0 + a1) / 2;
+      if (ang >= mid) g.arc(c, c, r, mid, ang);
+      else g.arc(c, c, r, ang, mid);
+    } else {
+      g.arc(c, c, r, a0, ang);
+    }
+    g.stroke();
+
+    g.beginPath(); g.arc(c, c, r - 5, 0, 2 * Math.PI);
+    g.fillStyle = '#2b2b2b'; g.fill();
+    g.strokeStyle = '#171717'; g.lineWidth = 1; g.stroke();
+
+    g.strokeStyle = '#ddd';
+    g.lineWidth = 2;
+    g.beginPath();
+    g.moveTo(c + Math.cos(ang) * (r - 12), c + Math.sin(ang) * (r - 12));
+    g.lineTo(c + Math.cos(ang) * (r - 5), c + Math.sin(ang) * (r - 5));
+    g.stroke();
+  }
+}
+
+const knobFreq = new Knob(document.getElementById('knobFreq'), {
+  min: EQ.FREQ_MIN, max: EQ.FREQ_MAX, log: true, def: 1000,
+  onInput: (v) => setBand(selected, { freq: v }),
+});
+const knobGain = new Knob(document.getElementById('knobGain'), {
+  min: -EQ.GAIN_MAX, max: EQ.GAIN_MAX, bipolar: true, def: 0,
+  onInput: (v) => setBand(selected, { gain: v }),
+});
+const knobQ = new Knob(document.getElementById('knobQ'), {
+  min: EQ.Q_MIN, max: EQ.Q_MAX, log: true, def: 0.71,
+  onInput: (v) => setBand(selected, { q: v }),
+});
+const knobScale = new Knob(document.getElementById('knobScale'), {
+  min: EQ.SCALE_MIN, max: EQ.SCALE_MAX, bipolar: true, def: 1,
+  onInput: (v) => setGlobals({ scale: v }),
+});
+const knobOut = new Knob(document.getElementById('knobOut'), {
+  min: -EQ.OUT_GAIN_MAX, max: EQ.OUT_GAIN_MAX, bipolar: true, def: 0,
+  onInput: (v) => setGlobals({ outGain: v }),
+});
+
+/* ---------------- selected band + globals readouts ---------------- */
 
 const selLabel = document.getElementById('selLabel');
-const inFreq = document.getElementById('inFreq');
-const inGain = document.getElementById('inGain');
-const inQ = document.getElementById('inQ');
+const valFreq = document.getElementById('valFreq');
+const valGain = document.getElementById('valGain');
+const valQ = document.getElementById('valQ');
+const valScale = document.getElementById('valScale');
+const valOut = document.getElementById('valOut');
+const cellGain = document.getElementById('cellGain');
+const cellQ = document.getElementById('cellQ');
+const adaptBtn = document.getElementById('adaptQ');
+
+adaptBtn.addEventListener('click', () => setGlobals({ adaptiveQ: !state.globals.adaptiveQ }));
 
 function updateBandUI() {
   const band = state.bands[selected];
-  const type = EQ.FILTER_TYPES.find((t) => t.id === band.type);
-  selLabel.textContent = 'Band ' + (selected + 1) + ' — ' + (type ? type.label : band.type);
-  inFreq.value = Math.round(band.freq);
-  inGain.value = band.gain;
-  inQ.value = band.q;
-  inGain.disabled = !EQ.USES_GAIN[band.type];
-  inQ.disabled = band.type === 'lowshelf' || band.type === 'highshelf';
+  const t = EQ.FILTER_TYPES.find((x) => x.id === band.type);
+  selLabel.textContent = 'Band ' + (selected + 1) + ' — ' + (t ? t.label : band.type);
+  knobFreq.set(band.freq);
+  valFreq.textContent = EQ.formatHz(band.freq);
+  knobGain.set(band.gain);
+  valGain.textContent = EQ.formatDb(band.gain);
+  knobQ.set(band.q);
+  valQ.textContent = band.q.toFixed(2);
+  cellGain.classList.toggle('disabled', !EQ.USES_GAIN[band.type]);
+  // WebAudio shelves have a fixed slope; Q is inert for them
+  cellQ.classList.toggle('disabled', band.type === 'lowshelf' || band.type === 'highshelf');
+  typeBtns.forEach((btn, i) => btn.classList.toggle('sel', EQ.FILTER_TYPES[i].id === band.type));
 }
 
-inFreq.addEventListener('input', () => {
-  const v = parseFloat(inFreq.value);
-  if (Number.isFinite(v)) setBand(selected, { freq: EQ.clamp(v, EQ.FREQ_MIN, EQ.FREQ_MAX) });
-});
-inGain.addEventListener('input', () => {
-  const v = parseFloat(inGain.value);
-  if (Number.isFinite(v)) setBand(selected, { gain: EQ.clamp(v, -EQ.GAIN_MAX, EQ.GAIN_MAX) });
-});
-inQ.addEventListener('input', () => {
-  const v = parseFloat(inQ.value);
-  if (Number.isFinite(v)) setBand(selected, { q: EQ.clamp(v, EQ.Q_MIN, EQ.Q_MAX) });
-});
+function updateGlobalUI() {
+  adaptBtn.classList.toggle('on', state.globals.adaptiveQ);
+  knobScale.set(state.globals.scale);
+  valScale.textContent = Math.round(state.globals.scale * 100) + '%';
+  knobOut.set(state.globals.outGain);
+  valOut.textContent = EQ.formatDb(state.globals.outGain);
+}
 
 /* ---------------- response curve ---------------- */
 
@@ -470,7 +630,7 @@ function frame() {
   }
 }
 
-/* ---------------- node hit-testing / selection ---------------- */
+/* ---------------- node hit-testing / drag ---------------- */
 
 function evtPos(e) {
   const r = canvas.getBoundingClientRect();
@@ -540,8 +700,10 @@ canvas.addEventListener('wheel', (e) => {
 (async function init() {
   await loadState();
   buildBandRow();
+  buildTypeRow();
   updateBandRow();
   updateBandUI();
+  updateGlobalUI();
   updateHeader();
   requestAnimationFrame(frame);
   queryStatus();
