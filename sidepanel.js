@@ -488,11 +488,52 @@ function hitNode(x, y, W, H) {
   return best;
 }
 
+let drag = null; // { index }
+
 canvas.addEventListener('pointerdown', (e) => {
   const { x, y, W, H } = evtPos(e);
   const hit = hitNode(x, y, W, H);
-  if (hit >= 0) selectBand(hit);
+  if (hit < 0) return;
+  selectBand(hit);
+  drag = { index: hit };
+  canvas.setPointerCapture(e.pointerId);
+  e.preventDefault();
 });
+
+canvas.addEventListener('pointermove', (e) => {
+  if (drag) {
+    const { x, y, W, H } = evtPos(e);
+    const band = state.bands[drag.index];
+    const patch = { freq: EQ.clamp(freqForX(EQ.clamp(x, 0, W), W), EQ.FREQ_MIN, EQ.FREQ_MAX) };
+    if (EQ.USES_GAIN[band.type]) {
+      // node sits at the *scaled* gain, so invert Scale when dragging;
+      // near scale 0 the node is pinned to 0 dB and vertical drag is a no-op
+      const sc = state.globals.scale;
+      if (Math.abs(sc) > 0.05) {
+        patch.gain = EQ.clamp(dbForY(EQ.clamp(y, 0, H), H) / sc, -EQ.GAIN_MAX, EQ.GAIN_MAX);
+      }
+    }
+    setBand(drag.index, patch);
+    return;
+  }
+  // hover feedback: resize cursor over a node
+  const { x, y, W, H } = evtPos(e);
+  canvas.style.cursor = hitNode(x, y, W, H) >= 0 ? 'move' : 'default';
+});
+
+canvas.addEventListener('pointerup', () => { drag = null; });
+canvas.addEventListener('pointercancel', () => { drag = null; });
+
+// scroll on a node = adjust Q (up = narrower, like EQ Eight)
+canvas.addEventListener('wheel', (e) => {
+  const { x, y, W, H } = evtPos(e);
+  const hit = drag ? drag.index : hitNode(x, y, W, H);
+  if (hit < 0) return;
+  e.preventDefault();
+  const band = state.bands[hit];
+  const q = EQ.clamp(band.q * Math.pow(1.15, -e.deltaY / 100), EQ.Q_MIN, EQ.Q_MAX);
+  setBand(hit, { q });
+}, { passive: false });
 
 /* ---------------- init ---------------- */
 
