@@ -10,6 +10,8 @@ let media = null;
 let source = null;
 let filters = [];
 let master = null;
+let analyser = null;
+let frameTimer = null;
 let running = false;
 let tabId = null;
 let tabTitle = '';
@@ -86,10 +88,17 @@ async function start({ streamId, tabId: tid, tabTitle: title, state: incoming })
     master = ctx.createGain();
     master.gain.value = Math.pow(10, state.globals.outGain / 20);
 
+    analyser = ctx.createAnalyser();
+    analyser.fftSize = 4096;
+    analyser.smoothingTimeConstant = 0.8;
+    analyser.minDecibels = -90;
+    analyser.maxDecibels = -15;
+
     let node = source;
     for (const f of filters) { node.connect(f); node = f; }
     node.connect(master);
     master.connect(ctx.destination);
+    master.connect(analyser); // post-EQ tap for the spectrum display
     await ctx.resume();
 
     media.getAudioTracks()[0].addEventListener('ended', () => stop(true));
@@ -97,6 +106,22 @@ async function start({ streamId, tabId: tid, tabTitle: title, state: incoming })
     running = true;
     tabId = tid ?? null;
     tabTitle = title || '';
+
+    // ~30fps FFT frames for the panel's spectrum silhouette. Typed arrays
+    // don't survive runtime messaging, hence Array.from. The catch swallows
+    // "no receiver" errors while the panel is closed.
+    const bins = new Uint8Array(analyser.frequencyBinCount);
+    frameTimer = setInterval(() => {
+      analyser.getByteFrequencyData(bins);
+      chrome.runtime.sendMessage({
+        target: 'panel',
+        type: 'spectrum',
+        sr: ctx.sampleRate,
+        fft: analyser.fftSize,
+        data: Array.from(bins),
+      }).catch(() => {});
+    }, 33);
+
     broadcastStatus();
     return status();
   } catch (e) {
@@ -106,9 +131,11 @@ async function start({ streamId, tabId: tid, tabTitle: title, state: incoming })
 }
 
 function stop(notify) {
+  clearInterval(frameTimer);
+  frameTimer = null;
   if (media) media.getTracks().forEach((t) => t.stop());
   if (ctx) ctx.close().catch(() => {});
-  ctx = source = media = master = null;
+  ctx = source = media = master = analyser = null;
   filters = [];
   running = false;
   tabId = null;

@@ -71,6 +71,16 @@ main {
 .status { min-height: 14px; color: var(--dim); }
 .status.err { color: #ff7a6e; }
 
+#graph {
+  width: 100%;
+  height: 240px;
+  background: var(--graph-bg);
+  border: 1px solid var(--edge);
+  border-radius: 3px;
+  display: block;
+  touch-action: none;
+}
+
 .band-row {
   display: grid;
   grid-template-columns: repeat(8, 1fr);
