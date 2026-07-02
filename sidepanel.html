@@ -17,6 +17,15 @@
   <span id="target" class="target">not capturing</span>
 </header>
 <main>
+  <div id="bandRow" class="band-row"></div>
+  <section class="controls">
+    <div class="left" id="bandEdit">
+      <div id="selLabel" class="sel-label"></div>
+      <label class="num-field">Freq <input id="inFreq" type="number" min="20" max="20000" step="1"></label>
+      <label class="num-field">Gain <input id="inGain" type="number" min="-15" max="15" step="0.5"></label>
+      <label class="num-field">Q <input id="inQ" type="number" min="0.1" max="18" step="0.1"></label>
+    </div>
+  </section>
   <div id="status" class="status"></div>
 </main>
 <script src="shared.js"></script>

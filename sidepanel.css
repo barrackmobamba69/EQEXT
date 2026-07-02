@@ -70,3 +70,84 @@ main {
 
 .status { min-height: 14px; color: var(--dim); }
 .status.err { color: #ff7a6e; }
+
+.band-row {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 3px;
+}
+
+.bandCell {
+  background: var(--cell);
+  border: 1px solid var(--edge);
+  border-radius: 3px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 2px;
+  cursor: pointer;
+  min-width: 0;
+}
+.bandCell.sel { border-color: var(--accent); }
+
+.bandCell .num {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid #555;
+  background: #222;
+  color: var(--dim);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+.bandCell.on .num {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #111;
+}
+
+.tsel {
+  width: 100%;
+  background: #222;
+  color: var(--text);
+  border: 1px solid #444;
+  border-radius: 2px;
+  font-size: 9px;
+}
+
+.controls { display: flex; gap: 8px; align-items: stretch; }
+
+.left {
+  flex: 1;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: 3px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sel-label { color: var(--accent); font-weight: 600; }
+
+.num-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  color: var(--dim);
+}
+.num-field input {
+  width: 70px;
+  background: #1e1e1e;
+  color: var(--text);
+  border: 1px solid #444;
+  border-radius: 2px;
+  padding: 2px 4px;
+  font: inherit;
+}
+.num-field input:disabled { opacity: 0.35; }

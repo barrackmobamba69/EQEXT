@@ -1,16 +1,23 @@
 'use strict';
 
 // Offscreen document: the only extension context with Web Audio access.
-// Captures the tab's MediaStream and (step 1) passes it straight through to
-// the speakers — tabCapture mutes the tab's direct output, so without this
-// reconnect the tab would go silent.
+// Captures the tab's MediaStream, chains 8 BiquadFilterNodes in series, and
+// reconnects to the speakers — tabCapture mutes the tab's direct output, so
+// without the reconnect the tab would go silent.
 
 let ctx = null;
 let media = null;
 let source = null;
+let filters = [];
+let master = null;
 let running = false;
 let tabId = null;
 let tabTitle = '';
+
+let state = {
+  bands: EQ.DEFAULT_BANDS.map((b) => ({ ...b })),
+  globals: { ...EQ.DEFAULT_GLOBALS },
+};
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.target !== 'offscreen') return;
@@ -20,6 +27,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true; // async sendResponse
     case 'stop':
       stop(true);
+      sendResponse({ ok: true });
+      break;
+    case 'setBand':
+      if (msg.band && state.bands[msg.index]) {
+        state.bands[msg.index] = { ...msg.band };
+        if (running) EQ.applyBand(filters[msg.index], state.bands[msg.index], state.globals, ctx.currentTime);
+      }
+      sendResponse({ ok: true });
+      break;
+    case 'setGlobals':
+      Object.assign(state.globals, msg.globals || {});
+      if (running) {
+        master.gain.setTargetAtTime(Math.pow(10, state.globals.outGain / 20), ctx.currentTime, 0.02);
+        // scale / adaptiveQ change every band's effective params
+        state.bands.forEach((b, i) => EQ.applyBand(filters[i], b, state.globals, ctx.currentTime));
+      }
       sendResponse({ ok: true });
       break;
     case 'query':
@@ -36,9 +59,15 @@ function broadcastStatus() {
   chrome.runtime.sendMessage({ target: 'panel', type: 'status', ...status() }).catch(() => {});
 }
 
-async function start({ streamId, tabId: tid, tabTitle: title }) {
+async function start({ streamId, tabId: tid, tabTitle: title, state: incoming }) {
   try {
     stop(false);
+    if (incoming?.bands && incoming?.globals) {
+      state = {
+        bands: incoming.bands.map((b) => ({ ...b })),
+        globals: { ...incoming.globals },
+      };
+    }
     media = await navigator.mediaDevices.getUserMedia({
       audio: {
         mandatory: {
@@ -50,7 +79,17 @@ async function start({ streamId, tabId: tid, tabTitle: title }) {
     });
     ctx = new AudioContext();
     source = ctx.createMediaStreamSource(media);
-    source.connect(ctx.destination);
+
+    filters = state.bands.map(() => ctx.createBiquadFilter());
+    state.bands.forEach((b, i) => EQ.applyBand(filters[i], b, state.globals));
+
+    master = ctx.createGain();
+    master.gain.value = Math.pow(10, state.globals.outGain / 20);
+
+    let node = source;
+    for (const f of filters) { node.connect(f); node = f; }
+    node.connect(master);
+    master.connect(ctx.destination);
     await ctx.resume();
 
     media.getAudioTracks()[0].addEventListener('ended', () => stop(true));
@@ -69,7 +108,8 @@ async function start({ streamId, tabId: tid, tabTitle: title }) {
 function stop(notify) {
   if (media) media.getTracks().forEach((t) => t.stop());
   if (ctx) ctx.close().catch(() => {});
-  ctx = source = media = null;
+  ctx = source = media = master = null;
+  filters = [];
   running = false;
   tabId = null;
   tabTitle = '';
