@@ -33,13 +33,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       break;
     case 'setBand':
       if (msg.band && state.bands[msg.index]) {
-        state.bands[msg.index] = { ...msg.band };
+        state.bands[msg.index] = EQ.sanitizeBand(msg.band, msg.index);
         if (running) EQ.applyBand(filters[msg.index], state.bands[msg.index], state.globals, ctx.currentTime);
       }
       sendResponse({ ok: true });
       break;
     case 'setGlobals':
-      Object.assign(state.globals, msg.globals || {});
+      state.globals = EQ.sanitizeGlobals({ ...state.globals, ...(msg.globals || {}) });
       if (running) {
         master.gain.setTargetAtTime(Math.pow(10, state.globals.outGain / 20), ctx.currentTime, 0.02);
         // scale / adaptiveQ change every band's effective params
@@ -54,7 +54,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 function status() {
-  return { ok: true, running, tabId, tabTitle, sampleRate: ctx ? ctx.sampleRate : null };
+  return {
+    ok: true,
+    running,
+    tabId,
+    tabTitle,
+    sampleRate: ctx ? ctx.sampleRate : null,
+    // echo the state actually driving the filters; while capturing, the
+    // popup adopts this wholesale so UI and audio can never diverge
+    state: running ? { bands: state.bands, globals: state.globals } : null,
+  };
 }
 
 function broadcastStatus() {
@@ -64,10 +73,10 @@ function broadcastStatus() {
 async function start({ streamId, tabId: tid, tabTitle: title, state: incoming }) {
   try {
     stop(false);
-    if (incoming?.bands && incoming?.globals) {
+    if (Array.isArray(incoming?.bands)) {
       state = {
-        bands: incoming.bands.map((b) => ({ ...b })),
-        globals: { ...incoming.globals },
+        bands: EQ.DEFAULT_BANDS.map((d, i) => EQ.sanitizeBand(incoming.bands[i], i)),
+        globals: EQ.sanitizeGlobals(incoming.globals),
       };
     }
     media = await navigator.mediaDevices.getUserMedia({

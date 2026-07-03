@@ -1,9 +1,9 @@
 'use strict';
 
-// Broker only: opens the side panel, keeps one offscreen document alive, and
-// resolves tabCapture stream ids. All audio processing lives in offscreen.js.
-
-chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+// Broker only: keeps one offscreen document alive and resolves tabCapture
+// stream ids. All audio processing lives in offscreen.js; the UI is the
+// action popup, which re-grants activeTab on every toolbar click so
+// getMediaStreamId always has a valid invocation for the current tab.
 
 async function ensureOffscreen() {
   const contexts = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });

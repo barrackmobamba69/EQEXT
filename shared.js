@@ -77,6 +77,32 @@ const EQ = (() => {
     }
   }
 
+  // Rebuild a band/globals object from untrusted input (storage, messages):
+  // unknown fields dropped, bad values fall back to the slot's defaults. Both
+  // contexts use these so every copy of the state has the exact same shape.
+  function sanitizeBand(b, i) {
+    const d = DEFAULT_BANDS[i] || DEFAULT_BANDS[0];
+    const src = (b && typeof b === 'object') ? b : {};
+    const num = (v, fb) => (Number.isFinite(v) ? v : fb);
+    return {
+      on: !!src.on,
+      type: FILTER_TYPES.some((t) => t.id === src.type) ? src.type : d.type,
+      freq: clamp(num(src.freq, d.freq), FREQ_MIN, FREQ_MAX),
+      gain: clamp(num(src.gain, d.gain), -GAIN_MAX, GAIN_MAX),
+      q: clamp(num(src.q, d.q), Q_MIN, Q_MAX),
+    };
+  }
+
+  function sanitizeGlobals(g) {
+    const src = (g && typeof g === 'object') ? g : {};
+    const num = (v, fb) => (Number.isFinite(v) ? v : fb);
+    return {
+      adaptiveQ: !!src.adaptiveQ,
+      scale: clamp(num(src.scale, 1), SCALE_MIN, SCALE_MAX),
+      outGain: clamp(num(src.outGain, 0), -OUT_GAIN_MAX, OUT_GAIN_MAX),
+    };
+  }
+
   function formatHz(f) {
     return f >= 1000 ? (f / 1000).toFixed(f >= 10000 ? 1 : 2) + ' kHz' : Math.round(f) + ' Hz';
   }
@@ -90,5 +116,6 @@ const EQ = (() => {
     FREQ_MIN, FREQ_MAX, GAIN_MAX, Q_MIN, Q_MAX, OUT_GAIN_MAX, SCALE_MIN, SCALE_MAX,
     DEFAULT_BANDS, DEFAULT_GLOBALS,
     clamp, bandGainDb, effectiveQ, applyBand, formatHz, formatDb,
+    sanitizeBand, sanitizeGlobals,
   };
 })();

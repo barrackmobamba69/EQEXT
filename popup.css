@@ -22,11 +22,13 @@
 
 html, body {
   margin: 0;
-  height: 100%;
   background: var(--chrome);
   color: var(--ink);
   font: 11px/1.4 "Century Gothic", "Futura", "Trebuchet MS", "Segoe UI", sans-serif;
 }
+
+/* action popups size to their content; pin the device width explicitly */
+body { width: 500px; }
 
 /* ---------- title bar ---------- */
 

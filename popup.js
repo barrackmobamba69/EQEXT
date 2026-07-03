@@ -1,10 +1,12 @@
 'use strict';
 
-// Side panel UI, styled after Ableton Live's EQ Eight (mid-gray theme).
+// Action-popup UI, styled after Ableton Live's EQ Eight (mid-gray theme).
 // Talks to background (capture start) and directly to the offscreen document
 // (everything else) via extension-wide runtime messages. The response curve
 // is computed locally from the same shared band->filter mapping the offscreen
 // doc uses, so it always matches the audible EQ.
+// NOTE: popups close on blur — clicking the page to test audio closes this
+// popup; the offscreen capture keeps running, just reopen it (expected, not a bug).
 
 /* ---------------- state ---------------- */
 
@@ -37,12 +39,13 @@ function scheduleSave() {
 
 async function loadState() {
   const { eqState } = await chrome.storage.local.get('eqState');
-  if (eqState?.v === 1) {
-    (eqState.bands || []).forEach((b, i) => {
-      if (state.bands[i]) state.bands[i] = { ...state.bands[i], ...b };
-    });
-    Object.assign(state.globals, eqState.globals || {});
+  if (eqState?.v !== 1) return;
+  // Wholesale replacement — never a field-by-field merge into the live array,
+  // so no stale fields from a previous state can survive a load.
+  if (Array.isArray(eqState.bands)) {
+    state.bands = EQ.DEFAULT_BANDS.map((d, i) => EQ.sanitizeBand(eqState.bands[i], i));
   }
+  state.globals = EQ.sanitizeGlobals({ ...state.globals, ...(eqState.globals || {}) });
 }
 
 /* ---------------- messaging ---------------- */
@@ -72,6 +75,19 @@ function applyStatus(s) {
     if (s.sampleRate !== curve.sampleRate) curve.setSampleRate(s.sampleRate);
   }
   if (!capture.running) spectrum = null;
+  // While capture runs, the offscreen doc is the single source of truth for
+  // the audible chain: adopt its echoed state wholesale so the popup can
+  // never render nodes/curve from a copy the filters aren't actually using.
+  if (capture.running && Array.isArray(s.state?.bands)) {
+    state.bands = EQ.DEFAULT_BANDS.map((d, i) => EQ.sanitizeBand(s.state.bands[i], i));
+    state.globals = EQ.sanitizeGlobals(s.state.globals);
+    if (cells.length) {
+      updateBandRow();
+      updateBandUI();
+      updateGlobalUI();
+    }
+    markDirty(true);
+  }
   updateHeader();
   markDirty(false);
 }
@@ -100,11 +116,7 @@ async function startCapture() {
     res = { ok: false, error: e.message || String(e) };
   }
   if (!res?.ok) {
-    setStatusLine(
-      (res?.error || 'Capture failed.') +
-      ' — if this says the extension was not invoked, click the toolbar icon while on that tab, then try again.',
-      true
-    );
+    setStatusLine(res?.error || 'Capture failed.', true);
     return;
   }
   applyStatus(res);
@@ -132,7 +144,7 @@ function setBand(i, patch) {
 
 function selectBand(i) {
   selected = i;
-  markDirty(false);
+  markDirty(true); // the selected-band overlay curve follows the selection
   updateBandRow();
   updateBandUI();
 }
@@ -154,6 +166,13 @@ const statusEl = document.getElementById('status');
 function setStatusLine(text, isError) {
   statusEl.textContent = text || '';
   statusEl.classList.toggle('err', !!isError);
+}
+
+let statusFlashTimer = null;
+function flashStatus(text) {
+  setStatusLine(text);
+  clearTimeout(statusFlashTimer);
+  statusFlashTimer = setTimeout(() => setStatusLine(''), 1800);
 }
 
 function updateHeader() {
@@ -403,11 +422,6 @@ const knobGain = new Knob(document.getElementById('knobGain'), {
   min: -EQ.GAIN_MAX, max: EQ.GAIN_MAX, bipolar: true, def: 0,
   onInput: (v) => setBand(selected, { gain: v }),
 });
-const knobQ = new Knob(document.getElementById('knobQ'), {
-  min: EQ.Q_MIN, max: EQ.Q_MAX, log: true, def: 0.71,
-  onInput: (v) => setBand(selected, { q: v }),
-});
-
 /* ---------------- drag value boxes (Live style) ---------------- */
 
 class DragValue {
@@ -460,13 +474,11 @@ const dvOut = new DragValue(document.getElementById('boxOut'), {
 
 const valFreq = document.getElementById('valFreq');
 const valGain = document.getElementById('valGain');
-const valQ = document.getElementById('valQ');
 const valScale = document.getElementById('valScale');
 const valOut = document.getElementById('valOut');
 const barScale = document.getElementById('barScale');
 const barOut = document.getElementById('barOut');
 const paramGain = document.getElementById('paramGain');
-const paramQ = document.getElementById('paramQ');
 const adaptBtn = document.getElementById('adaptQ');
 const specToggle = document.getElementById('specToggle');
 
@@ -484,11 +496,8 @@ function updateBandUI() {
   valFreq.textContent = EQ.formatHz(band.freq);
   knobGain.set(band.gain);
   valGain.textContent = EQ.formatDb(band.gain);
-  knobQ.set(band.q);
-  valQ.textContent = band.q.toFixed(2);
+  // no Q knob: Q stays on the band model, adjusted by scrolling on a node
   paramGain.classList.toggle('disabled', !EQ.USES_GAIN[band.type]);
-  // WebAudio shelves have a fixed slope; Q is inert for them
-  paramQ.classList.toggle('disabled', band.type === 'lowshelf' || band.type === 'highshelf');
 }
 
 function updateGlobalUI() {
@@ -509,7 +518,8 @@ class ResponseCurve {
     this.n = points;
     this.mag = new Float32Array(points);
     this.phase = new Float32Array(points);
-    this.total = new Float32Array(points); // summed dB of all enabled bands
+    this.total = new Float32Array(points);  // summed dB of all enabled bands
+    this.single = new Float32Array(points); // selected band's own dB
     this.setSampleRate(48000);
   }
 
@@ -527,14 +537,17 @@ class ResponseCurve {
     curveDirty = true;
   }
 
-  compute(bands, globals) {
+  compute(bands, globals, selectedIdx) {
     this.total.fill(0);
-    bands.forEach((band) => {
+    this.single.fill(0);
+    bands.forEach((band, bi) => {
       if (!band.on) return;
       EQ.applyBand(this.filter, band, globals);
       this.filter.getFrequencyResponse(this.freqs, this.mag, this.phase);
       for (let i = 0; i < this.n; i++) {
-        this.total[i] += 20 * Math.log10(Math.max(this.mag[i], 1e-6));
+        const db = 20 * Math.log10(Math.max(this.mag[i], 1e-6));
+        this.total[i] += db;
+        if (bi === selectedIdx) this.single[i] = db;
       }
     });
   }
@@ -635,6 +648,16 @@ function curveY(arr, i, H) {
 
 function drawCurve(W, H) {
   const n = curve.n;
+  // selected band's own response, faint — shows how a node relates to the
+  // summed curve even when another band (e.g. a band-pass) dominates the sum
+  if (state.bands[selected]?.on) {
+    g2d.beginPath();
+    g2d.moveTo(0, curveY(curve.single, 0, H));
+    for (let i = 1; i < n; i++) g2d.lineTo((i / (n - 1)) * W, curveY(curve.single, i, H));
+    g2d.strokeStyle = 'rgba(245, 166, 35, 0.45)';
+    g2d.lineWidth = 1;
+    g2d.stroke();
+  }
   g2d.beginPath();
   g2d.moveTo(0, curveY(curve.total, 0, H));
   for (let i = 1; i < n; i++) g2d.lineTo((i / (n - 1)) * W, curveY(curve.total, i, H));
@@ -689,7 +712,7 @@ function draw() {
   drawGrid(W, H);
   drawSpectrum(W, H);
   if (curveDirty) {
-    curve.compute(state.bands, state.globals);
+    curve.compute(state.bands, state.globals, selected);
     curveDirty = false;
   }
   drawCurve(W, H);
@@ -771,6 +794,29 @@ canvas.addEventListener('wheel', (e) => {
   const q = EQ.clamp(band.q * Math.pow(1.15, -e.deltaY / 100), EQ.Q_MIN, EQ.Q_MAX);
   setBand(hit, { q });
 }, { passive: false });
+
+// double-click a node = remove it (disable the band, filter goes no-op);
+// double-click empty space = add the next free band there as a bell
+canvas.addEventListener('dblclick', (e) => {
+  const { x, y, W, H } = evtPos(e);
+  const hit = hitNode(x, y, W, H); // same radius as the drag hit-test
+  if (hit >= 0) {
+    setBand(hit, { on: false });
+    return;
+  }
+  const free = state.bands.findIndex((b) => !b.on);
+  if (free < 0) {
+    flashStatus('All 8 bands are already in use.');
+    return;
+  }
+  const freq = EQ.clamp(freqForX(EQ.clamp(x, 0, W), W), EQ.FREQ_MIN, EQ.FREQ_MAX);
+  const sc = state.globals.scale;
+  const gain = Math.abs(sc) > 0.05
+    ? EQ.clamp(dbForY(EQ.clamp(y, 0, H), H) / sc, -EQ.GAIN_MAX, EQ.GAIN_MAX)
+    : 0;
+  setBand(free, { on: true, type: 'peaking', freq, gain });
+  selectBand(free);
+});
 
 /* ---------------- init ---------------- */
 
