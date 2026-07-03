@@ -275,6 +275,9 @@ body { width: 500px; }
   display: flex;
   flex-direction: column;
 }
+/* higher specificity than the bare .type-menu rule above, so the hidden
+   attribute (toggled by closeTypeMenu()) actually hides it */
+.type-menu[hidden] { display: none; }
 
 .mitem {
   display: flex;
