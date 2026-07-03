@@ -1,9 +1,10 @@
 'use strict';
 
-// Side panel UI. Talks to background (capture start) and directly to the
-// offscreen document (everything else) via extension-wide runtime messages.
-// The response curve is computed locally from the same shared band->filter
-// mapping the offscreen doc uses, so it always matches the audible EQ.
+// Side panel UI, styled after Ableton Live's EQ Eight (mid-gray theme).
+// Talks to background (capture start) and directly to the offscreen document
+// (everything else) via extension-wide runtime messages. The response curve
+// is computed locally from the same shared band->filter mapping the offscreen
+// doc uses, so it always matches the audible EQ.
 
 /* ---------------- state ---------------- */
 
@@ -14,9 +15,10 @@ const state = {
 let selected = 2; // first default-enabled bell
 const capture = { running: false, tabId: null, tabTitle: '', sampleRate: 48000 };
 
-let spectrum = null;   // latest FFT frame from the offscreen doc
-let paintDirty = true; // canvas repaint needed
-let curveDirty = true; // response curve recompute needed
+let spectrum = null;     // latest FFT frame from the offscreen doc
+let showSpectrum = true; // analyzer display toggle (right column button)
+let paintDirty = true;   // canvas repaint needed
+let curveDirty = true;   // response curve recompute needed
 
 function markDirty(curveToo) {
   paintDirty = true;
@@ -130,7 +132,7 @@ function setBand(i, patch) {
 
 function selectBand(i) {
   selected = i;
-  markDirty(true); // selected-band overlay curve changes
+  markDirty(false);
   updateBandRow();
   updateBandUI();
 }
@@ -179,13 +181,13 @@ const TYPE_PATHS = {
   lowpass:   'M2 3 L12 3 C17 3 17 12 22 12',
 };
 
-function typeIcon(typeId) {
-  return '<svg viewBox="0 0 24 15" width="24" height="15" aria-hidden="true" fill="none" ' +
-    'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">' +
-    '<path d="' + TYPE_PATHS[typeId] + '"/></svg>';
+function typeIcon(typeId, w = 24, h = 15) {
+  return '<svg viewBox="0 0 24 15" width="' + w + '" height="' + h + '" aria-hidden="true" ' +
+    'fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ' +
+    'stroke-linejoin="round"><path d="' + TYPE_PATHS[typeId] + '"/></svg>';
 }
 
-/* ---------------- band row ---------------- */
+/* ---------------- band row (type dropdown + checkbox + number) ---------------- */
 
 const bandRowEl = document.getElementById('bandRow');
 const cells = [];
@@ -195,53 +197,95 @@ function buildBandRow() {
     const cell = document.createElement('div');
     cell.className = 'bandCell';
 
-    const num = document.createElement('button');
-    num.className = 'num';
-    num.textContent = String(i + 1);
-    num.title = 'Enable/disable band ' + (i + 1);
-    num.addEventListener('click', (e) => {
+    const dd = document.createElement('button');
+    dd.className = 'dd';
+    dd.title = 'Filter type — band ' + (i + 1);
+    dd.addEventListener('click', (e) => {
+      e.stopPropagation();
+      selectBand(i);
+      openTypeMenu(i, dd);
+    });
+
+    const cbrow = document.createElement('div');
+    cbrow.className = 'cbrow';
+
+    const cb = document.createElement('button');
+    cb.className = 'cb';
+    cb.title = 'Enable/disable band ' + (i + 1);
+    cb.addEventListener('click', (e) => {
       e.stopPropagation();
       selectBand(i);
       setBand(i, { on: !state.bands[i].on });
     });
 
-    const icon = document.createElement('span');
-    icon.className = 'ticon';
+    const num = document.createElement('span');
+    num.className = 'bnum';
+    num.textContent = String(i + 1);
 
-    cell.appendChild(num);
-    cell.appendChild(icon);
+    cbrow.appendChild(cb);
+    cbrow.appendChild(num);
+    cell.appendChild(dd);
+    cell.appendChild(cbrow);
     cell.addEventListener('click', () => selectBand(i));
     bandRowEl.appendChild(cell);
     cells.push(cell);
   });
 }
 
+const DD_ARROW =
+  '<svg class="arrow" viewBox="0 0 6 4" width="6" height="4" aria-hidden="true">' +
+  '<path d="M0 0 L6 0 L3 4 Z" fill="currentColor"/></svg>';
+
 function updateBandRow() {
   cells.forEach((cell, i) => {
     cell.classList.toggle('sel', i === selected);
-    cell.classList.toggle('on', state.bands[i].on);
-    cell.querySelector('.ticon').innerHTML = typeIcon(state.bands[i].type);
+    cell.querySelector('.cb').classList.toggle('on', state.bands[i].on);
+    cell.querySelector('.dd').innerHTML = typeIcon(state.bands[i].type, 19, 12) + DD_ARROW;
   });
 }
 
-/* ---------------- filter-type button row (selected band) ---------------- */
+/* ---------------- filter-type dropdown menu ---------------- */
 
-const typeRowEl = document.getElementById('typeRow');
-const typeBtns = [];
+const typeMenu = document.getElementById('typeMenu');
+let menuFor = -1;
 
-function buildTypeRow() {
+function openTypeMenu(i, anchor) {
+  menuFor = i;
+  typeMenu.innerHTML = '';
   EQ.FILTER_TYPES.forEach((t) => {
-    const btn = document.createElement('button');
-    btn.className = 'typeBtn';
-    btn.title = t.label;
-    btn.innerHTML = typeIcon(t.id);
-    btn.addEventListener('click', () => setBand(selected, { type: t.id }));
-    typeRowEl.appendChild(btn);
-    typeBtns.push(btn);
+    const item = document.createElement('button');
+    item.className = 'mitem' + (state.bands[i].type === t.id ? ' cur' : '');
+    item.innerHTML = typeIcon(t.id) + '<span>' + t.label + '</span>';
+    item.addEventListener('click', () => {
+      setBand(menuFor, { type: t.id });
+      closeTypeMenu();
+    });
+    typeMenu.appendChild(item);
   });
+  typeMenu.hidden = false;
+  const r = anchor.getBoundingClientRect();
+  const mw = typeMenu.offsetWidth;
+  const mh = typeMenu.offsetHeight;
+  const x = Math.max(4, Math.min(r.left, window.innerWidth - mw - 4));
+  let y = r.top - mh - 2; // open upward over the display, like Live
+  if (y < 4) y = Math.min(r.bottom + 2, window.innerHeight - mh - 4);
+  typeMenu.style.left = x + 'px';
+  typeMenu.style.top = y + 'px';
 }
 
-/* ---------------- rotary knobs ---------------- */
+function closeTypeMenu() {
+  typeMenu.hidden = true;
+  menuFor = -1;
+}
+
+document.addEventListener('pointerdown', (e) => {
+  if (!typeMenu.hidden && !typeMenu.contains(e.target)) closeTypeMenu();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeTypeMenu();
+});
+
+/* ---------------- rotary knobs (Live style: dark cap, light notch) ------- */
 
 class Knob {
   constructor(canvasEl, opts) {
@@ -293,7 +337,7 @@ class Knob {
   }
 
   draw() {
-    const size = this.cv.clientWidth || 44;
+    const size = this.cv.clientWidth || 38;
     const k = window.devicePixelRatio || 1;
     if (this.cv.width !== Math.round(size * k)) {
       this.cv.width = Math.round(size * k);
@@ -303,37 +347,51 @@ class Knob {
     g.setTransform(k, 0, 0, k, 0, 0);
     g.clearRect(0, 0, size, size);
     const c = size / 2;
-    const r = c - 4;
+    const r = c - 2;
     const a0 = 0.75 * Math.PI;
     const a1 = 2.25 * Math.PI;
     const ang = a0 + this.norm(this.value) * (a1 - a0);
 
-    g.lineCap = 'round';
-    g.lineWidth = 3;
-    g.strokeStyle = '#3d3d3d';
-    g.beginPath(); g.arc(c, c, r, a0, a1); g.stroke();
+    // dark cap on the light chrome
+    g.beginPath();
+    g.arc(c, c, r - 2, 0, 2 * Math.PI);
+    g.fillStyle = '#3d3d3d';
+    g.fill();
+    g.strokeStyle = '#262626';
+    g.lineWidth = 1;
+    g.stroke();
 
-    g.strokeStyle = '#ffb02e';
+    // value arc along the rim
+    g.lineCap = 'butt';
+    g.lineWidth = 2;
+    g.strokeStyle = '#e8e8e8';
     g.beginPath();
     if (this.o.bipolar) {
       const mid = (a0 + a1) / 2;
-      if (ang >= mid) g.arc(c, c, r, mid, ang);
-      else g.arc(c, c, r, ang, mid);
+      if (ang >= mid) g.arc(c, c, r - 2, mid, ang);
+      else g.arc(c, c, r - 2, ang, mid);
     } else {
-      g.arc(c, c, r, a0, ang);
+      g.arc(c, c, r - 2, a0, ang);
     }
     g.stroke();
 
-    g.beginPath(); g.arc(c, c, r - 5, 0, 2 * Math.PI);
-    g.fillStyle = '#2b2b2b'; g.fill();
-    g.strokeStyle = '#171717'; g.lineWidth = 1; g.stroke();
-
-    g.strokeStyle = '#ddd';
+    // pointer notch
+    g.lineCap = 'round';
     g.lineWidth = 2;
     g.beginPath();
-    g.moveTo(c + Math.cos(ang) * (r - 12), c + Math.sin(ang) * (r - 12));
-    g.lineTo(c + Math.cos(ang) * (r - 5), c + Math.sin(ang) * (r - 5));
+    g.moveTo(c + Math.cos(ang) * (r * 0.35), c + Math.sin(ang) * (r * 0.35));
+    g.lineTo(c + Math.cos(ang) * (r - 4), c + Math.sin(ang) * (r - 4));
     g.stroke();
+
+    // center-detent tick for bipolar knobs
+    if (this.o.bipolar) {
+      g.strokeStyle = '#555';
+      g.lineWidth = 1.5;
+      g.beginPath();
+      g.moveTo(c, c - r + 1);
+      g.lineTo(c, c - r + 5);
+      g.stroke();
+    }
   }
 }
 
@@ -349,51 +407,99 @@ const knobQ = new Knob(document.getElementById('knobQ'), {
   min: EQ.Q_MIN, max: EQ.Q_MAX, log: true, def: 0.71,
   onInput: (v) => setBand(selected, { q: v }),
 });
-const knobScale = new Knob(document.getElementById('knobScale'), {
-  min: EQ.SCALE_MIN, max: EQ.SCALE_MAX, bipolar: true, def: 1,
+
+/* ---------------- drag value boxes (Live style) ---------------- */
+
+class DragValue {
+  constructor(el, opts) {
+    this.el = el;
+    this.o = Object.assign({ fine: 0.15 }, opts);
+    this.value = this.o.def;
+    this.dragging = null;
+    el.addEventListener('pointerdown', (e) => {
+      this.dragging = { y0: e.clientY, v0: this.value };
+      el.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+    el.addEventListener('pointermove', (e) => {
+      if (!this.dragging) return;
+      const dv = ((this.dragging.y0 - e.clientY) / 140) * (this.o.max - this.o.min) *
+        (e.shiftKey ? this.o.fine : 1);
+      this.input(this.dragging.v0 + dv);
+    });
+    el.addEventListener('pointerup', () => { this.dragging = null; });
+    el.addEventListener('pointercancel', () => { this.dragging = null; });
+    el.addEventListener('dblclick', () => this.input(this.o.def));
+    el.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const step = 0.02 * (this.o.max - this.o.min) * (e.shiftKey ? this.o.fine : 1);
+      this.input(this.value + (e.deltaY < 0 ? step : -step));
+    }, { passive: false });
+  }
+
+  input(v) {
+    this.set(v);
+    if (this.o.onInput) this.o.onInput(this.value);
+  }
+
+  set(v) {
+    this.value = EQ.clamp(v, this.o.min, this.o.max);
+  }
+}
+
+const dvScale = new DragValue(document.getElementById('boxScale'), {
+  min: EQ.SCALE_MIN, max: EQ.SCALE_MAX, def: 1,
   onInput: (v) => setGlobals({ scale: v }),
 });
-const knobOut = new Knob(document.getElementById('knobOut'), {
-  min: -EQ.OUT_GAIN_MAX, max: EQ.OUT_GAIN_MAX, bipolar: true, def: 0,
+const dvOut = new DragValue(document.getElementById('boxOut'), {
+  min: -EQ.OUT_GAIN_MAX, max: EQ.OUT_GAIN_MAX, def: 0,
   onInput: (v) => setGlobals({ outGain: v }),
 });
 
-/* ---------------- selected band + globals readouts ---------------- */
+/* ---------------- readouts / right column ---------------- */
 
-const selLabel = document.getElementById('selLabel');
 const valFreq = document.getElementById('valFreq');
 const valGain = document.getElementById('valGain');
 const valQ = document.getElementById('valQ');
 const valScale = document.getElementById('valScale');
 const valOut = document.getElementById('valOut');
-const cellGain = document.getElementById('cellGain');
-const cellQ = document.getElementById('cellQ');
+const barScale = document.getElementById('barScale');
+const barOut = document.getElementById('barOut');
+const paramGain = document.getElementById('paramGain');
+const paramQ = document.getElementById('paramQ');
 const adaptBtn = document.getElementById('adaptQ');
+const specToggle = document.getElementById('specToggle');
 
 adaptBtn.addEventListener('click', () => setGlobals({ adaptiveQ: !state.globals.adaptiveQ }));
 
+specToggle.addEventListener('click', () => {
+  showSpectrum = !showSpectrum;
+  specToggle.classList.toggle('on', showSpectrum);
+  markDirty(false);
+});
+
 function updateBandUI() {
   const band = state.bands[selected];
-  const t = EQ.FILTER_TYPES.find((x) => x.id === band.type);
-  selLabel.textContent = 'Band ' + (selected + 1) + ' — ' + (t ? t.label : band.type);
   knobFreq.set(band.freq);
   valFreq.textContent = EQ.formatHz(band.freq);
   knobGain.set(band.gain);
   valGain.textContent = EQ.formatDb(band.gain);
   knobQ.set(band.q);
   valQ.textContent = band.q.toFixed(2);
-  cellGain.classList.toggle('disabled', !EQ.USES_GAIN[band.type]);
+  paramGain.classList.toggle('disabled', !EQ.USES_GAIN[band.type]);
   // WebAudio shelves have a fixed slope; Q is inert for them
-  cellQ.classList.toggle('disabled', band.type === 'lowshelf' || band.type === 'highshelf');
-  typeBtns.forEach((btn, i) => btn.classList.toggle('sel', EQ.FILTER_TYPES[i].id === band.type));
+  paramQ.classList.toggle('disabled', band.type === 'lowshelf' || band.type === 'highshelf');
 }
 
 function updateGlobalUI() {
   adaptBtn.classList.toggle('on', state.globals.adaptiveQ);
-  knobScale.set(state.globals.scale);
-  valScale.textContent = Math.round(state.globals.scale * 100) + '%';
-  knobOut.set(state.globals.outGain);
+  adaptBtn.textContent = state.globals.adaptiveQ ? 'On' : 'Off';
+  dvScale.set(state.globals.scale);
+  valScale.textContent = Math.round(state.globals.scale * 100) + ' %';
+  barScale.style.width = (state.globals.scale / EQ.SCALE_MAX) * 100 + '%';
+  dvOut.set(state.globals.outGain);
   valOut.textContent = EQ.formatDb(state.globals.outGain);
+  barOut.style.width = ((state.globals.outGain + EQ.OUT_GAIN_MAX) / (2 * EQ.OUT_GAIN_MAX)) * 100 + '%';
 }
 
 /* ---------------- response curve ---------------- */
@@ -403,8 +509,7 @@ class ResponseCurve {
     this.n = points;
     this.mag = new Float32Array(points);
     this.phase = new Float32Array(points);
-    this.total = new Float32Array(points);  // summed dB of all enabled bands
-    this.single = new Float32Array(points); // selected band's own dB
+    this.total = new Float32Array(points); // summed dB of all enabled bands
     this.setSampleRate(48000);
   }
 
@@ -422,17 +527,14 @@ class ResponseCurve {
     curveDirty = true;
   }
 
-  compute(bands, globals, selectedIdx) {
+  compute(bands, globals) {
     this.total.fill(0);
-    this.single.fill(0);
-    bands.forEach((band, bi) => {
+    bands.forEach((band) => {
       if (!band.on) return;
       EQ.applyBand(this.filter, band, globals);
       this.filter.getFrequencyResponse(this.freqs, this.mag, this.phase);
       for (let i = 0; i < this.n; i++) {
-        const db = 20 * Math.log10(Math.max(this.mag[i], 1e-6));
-        this.total[i] += db;
-        if (bi === selectedIdx) this.single[i] = db;
+        this.total[i] += 20 * Math.log10(Math.max(this.mag[i], 1e-6));
       }
     });
   }
@@ -447,7 +549,7 @@ const g2d = canvas.getContext('2d');
 let dpr = 1;
 
 const DB_RANGE = 18;
-const NODE_R = 8;
+const NODE_R = 8.5;
 
 const xForFreq = (f, W) => W * (Math.log10(f / EQ.FREQ_MIN) / Math.log10(EQ.FREQ_MAX / EQ.FREQ_MIN));
 const freqForX = (x, W) => EQ.FREQ_MIN * Math.pow(EQ.FREQ_MAX / EQ.FREQ_MIN, x / W);
@@ -472,10 +574,7 @@ function fitCanvas() {
   }
 }
 
-const FREQ_LABELS = [
-  [50, '50'], [100, '100'], [200, '200'], [500, '500'],
-  [1000, '1k'], [2000, '2k'], [5000, '5k'], [10000, '10k'],
-];
+const FREQ_LABELS = [[100, '100'], [1000, '1k'], [10000, '10k']];
 
 function drawGrid(W, H) {
   g2d.lineWidth = 1;
@@ -484,31 +583,31 @@ function drawGrid(W, H) {
       const f = dec * m;
       if (f < EQ.FREQ_MIN || f > EQ.FREQ_MAX) continue;
       const x = Math.round(xForFreq(f, W)) + 0.5;
-      g2d.strokeStyle = m === 1 ? '#333333' : '#242424';
+      g2d.strokeStyle = m === 1 ? '#292929' : '#303030';
       g2d.beginPath(); g2d.moveTo(x, 0); g2d.lineTo(x, H); g2d.stroke();
     }
   }
   for (const db of [-12, -6, 6, 12]) {
     const y = Math.round(yForDb(db, H)) + 0.5;
-    g2d.strokeStyle = '#242424';
+    g2d.strokeStyle = '#303030';
     g2d.beginPath(); g2d.moveTo(0, y); g2d.lineTo(W, y); g2d.stroke();
   }
   const y0 = Math.round(yForDb(0, H)) + 0.5;
-  g2d.strokeStyle = '#3d3d3d';
+  g2d.strokeStyle = '#474747';
   g2d.beginPath(); g2d.moveTo(0, y0); g2d.lineTo(W, y0); g2d.stroke();
 
-  g2d.fillStyle = '#6a6a6a';
-  g2d.font = '9px "Segoe UI", sans-serif';
+  g2d.fillStyle = '#8a8a8a';
+  g2d.font = '10px "Century Gothic", "Segoe UI", sans-serif';
   g2d.textAlign = 'center';
-  for (const [f, label] of FREQ_LABELS) g2d.fillText(label, xForFreq(f, W), H - 3);
+  for (const [f, label] of FREQ_LABELS) g2d.fillText(label, xForFreq(f, W), H - 5);
   g2d.textAlign = 'left';
-  for (const db of [-12, -6, 0, 6, 12]) {
-    g2d.fillText((db > 0 ? '+' : '') + db, 3, yForDb(db, H) - 2);
+  for (const db of [12, 6, 0, -6, -12]) {
+    g2d.fillText(String(db), 4, yForDb(db, H) - 3);
   }
 }
 
 function drawSpectrum(W, H) {
-  if (!spectrum || !capture.running) return;
+  if (!showSpectrum || !spectrum || !capture.running) return;
   const { sr, fft, data } = spectrum;
   const binHz = sr / fft;
   g2d.beginPath();
@@ -525,11 +624,9 @@ function drawSpectrum(W, H) {
   }
   g2d.lineTo(W, H);
   g2d.closePath();
-  g2d.fillStyle = 'rgba(255, 255, 255, 0.07)';
+  // flat gray silhouette, no outline — like Live's analyzer
+  g2d.fillStyle = 'rgba(215, 215, 215, 0.17)';
   g2d.fill();
-  g2d.strokeStyle = 'rgba(255, 255, 255, 0.18)';
-  g2d.lineWidth = 1;
-  g2d.stroke();
 }
 
 function curveY(arr, i, H) {
@@ -538,55 +635,34 @@ function curveY(arr, i, H) {
 
 function drawCurve(W, H) {
   const n = curve.n;
-  const xAt = (i) => (i / (n - 1)) * W;
-
-  // shaded area between the summed curve and the 0 dB line
   g2d.beginPath();
   g2d.moveTo(0, curveY(curve.total, 0, H));
-  for (let i = 1; i < n; i++) g2d.lineTo(xAt(i), curveY(curve.total, i, H));
-  g2d.lineTo(W, yForDb(0, H));
-  g2d.lineTo(0, yForDb(0, H));
-  g2d.closePath();
-  g2d.fillStyle = 'rgba(255, 255, 255, 0.06)';
-  g2d.fill();
-
-  // selected band's individual response
-  if (state.bands[selected]?.on) {
-    g2d.beginPath();
-    g2d.moveTo(0, curveY(curve.single, 0, H));
-    for (let i = 1; i < n; i++) g2d.lineTo(xAt(i), curveY(curve.single, i, H));
-    g2d.strokeStyle = 'rgba(255, 176, 46, 0.55)';
-    g2d.lineWidth = 1;
-    g2d.stroke();
-  }
-
-  // summed curve
-  g2d.beginPath();
-  g2d.moveTo(0, curveY(curve.total, 0, H));
-  for (let i = 1; i < n; i++) g2d.lineTo(xAt(i), curveY(curve.total, i, H));
-  g2d.strokeStyle = '#f2f2f2';
-  g2d.lineWidth = 1.5;
+  for (let i = 1; i < n; i++) g2d.lineTo((i / (n - 1)) * W, curveY(curve.total, i, H));
+  g2d.strokeStyle = '#76c8ea';
+  g2d.lineWidth = 2;
+  g2d.lineJoin = 'round';
   g2d.stroke();
 }
 
 function drawNodes(W, H) {
   const order = state.bands.map((_, i) => i).filter((i) => i !== selected);
   order.push(selected); // selected drawn on top
-  g2d.font = 'bold 10px "Segoe UI", sans-serif';
+  g2d.font = 'bold 10px "Century Gothic", "Segoe UI", sans-serif';
   g2d.textAlign = 'center';
   g2d.textBaseline = 'middle';
   for (const i of order) {
     const band = state.bands[i];
+    if (!band.on) continue; // Live hides the dots of disabled bands
     const { x, y } = nodePos(band, W, H);
     const isSel = i === selected;
     g2d.beginPath();
     g2d.arc(x, y, NODE_R, 0, Math.PI * 2);
-    g2d.fillStyle = isSel ? '#ffb02e' : (band.on ? '#2d2d2d' : '#202020');
+    g2d.fillStyle = isSel ? '#f5a623' : 'rgba(35, 35, 35, 0.6)';
     g2d.fill();
-    g2d.strokeStyle = isSel ? '#ffb02e' : (band.on ? '#cfcfcf' : '#5a5a5a');
-    g2d.lineWidth = 1.2;
+    g2d.strokeStyle = '#f5a623';
+    g2d.lineWidth = 1.7;
     g2d.stroke();
-    g2d.fillStyle = isSel ? '#111' : (band.on ? '#e8e8e8' : '#777');
+    g2d.fillStyle = isSel ? '#333' : '#f5a623';
     g2d.fillText(String(i + 1), x, y + 0.5);
   }
   g2d.textBaseline = 'alphabetic';
@@ -596,11 +672,11 @@ function drawReadout() {
   const band = state.bands[selected];
   const gainTxt = EQ.USES_GAIN[band.type] ? EQ.formatDb(band.gain) : '—';
   g2d.fillStyle = '#9a9a9a';
-  g2d.font = '10px "Segoe UI", sans-serif';
+  g2d.font = '10px "Century Gothic", "Segoe UI", sans-serif';
   g2d.textAlign = 'left';
   g2d.fillText(
     (selected + 1) + '   ' + EQ.formatHz(band.freq) + '   ' + gainTxt + '   Q ' + band.q.toFixed(2),
-    6, 12
+    6, 13
   );
 }
 
@@ -613,7 +689,7 @@ function draw() {
   drawGrid(W, H);
   drawSpectrum(W, H);
   if (curveDirty) {
-    curve.compute(state.bands, state.globals, selected);
+    curve.compute(state.bands, state.globals);
     curveDirty = false;
   }
   drawCurve(W, H);
@@ -624,7 +700,7 @@ function draw() {
 function frame() {
   requestAnimationFrame(frame);
   fitCanvas();
-  if (paintDirty || (capture.running && spectrum)) {
+  if (paintDirty || (capture.running && spectrum && showSpectrum)) {
     draw();
     paintDirty = false;
   }
@@ -641,6 +717,7 @@ function hitNode(x, y, W, H) {
   let best = -1;
   let bestDist = NODE_R + 6; // px tolerance
   state.bands.forEach((band, i) => {
+    if (!band.on) return; // hidden nodes aren't grabbable
     const p = nodePos(band, W, H);
     const d = Math.hypot(p.x - x, p.y - y);
     if (d < bestDist) { bestDist = d; best = i; }
@@ -676,7 +753,7 @@ canvas.addEventListener('pointermove', (e) => {
     setBand(drag.index, patch);
     return;
   }
-  // hover feedback: resize cursor over a node
+  // hover feedback: move cursor over a node
   const { x, y, W, H } = evtPos(e);
   canvas.style.cursor = hitNode(x, y, W, H) >= 0 ? 'move' : 'default';
 });
@@ -700,7 +777,6 @@ canvas.addEventListener('wheel', (e) => {
 (async function init() {
   await loadState();
   buildBandRow();
-  buildTypeRow();
   updateBandRow();
   updateBandUI();
   updateGlobalUI();

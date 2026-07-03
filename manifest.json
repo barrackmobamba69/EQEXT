@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Tab EQ Eight",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "8-band parametric EQ for the current tab's audio, modeled on Ableton Live's EQ Eight.",
   "minimum_chrome_version": "116",
   "permissions": ["sidePanel", "tabCapture", "offscreen", "storage", "activeTab", "tabs"],

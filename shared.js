@@ -80,8 +80,9 @@ const EQ = (() => {
   function formatHz(f) {
     return f >= 1000 ? (f / 1000).toFixed(f >= 10000 ? 1 : 2) + ' kHz' : Math.round(f) + ' Hz';
   }
+  // Live-style value formatting: "6.67 kHz", "-0.62 dB" (no plus sign)
   function formatDb(g) {
-    return (g > 0 ? '+' : '') + g.toFixed(1) + ' dB';
+    return g.toFixed(2) + ' dB';
   }
 
   return {
