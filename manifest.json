@@ -1,13 +1,23 @@
 {
   "manifest_version": 3,
   "name": "Tab EQ Eight",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "8-band parametric EQ for the current tab's audio, modeled on Ableton Live's EQ Eight.",
   "minimum_chrome_version": "116",
-  "permissions": ["tabCapture", "offscreen", "storage", "activeTab", "tabs"],
-  "background": { "service_worker": "background.js" },
+  "permissions": ["tabCapture", "offscreen", "storage", "activeTab"],
+  "background": { "service_worker": "src/background.js" },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "action": {
     "default_title": "Tab EQ Eight",
-    "default_popup": "popup.html"
+    "default_popup": "src/popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
   }
 }
