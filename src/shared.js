@@ -1,8 +1,8 @@
 'use strict';
 
-// Shared between the side panel and the offscreen document (plain script, no
+// Shared between the popup and the offscreen document (plain script, no
 // modules — MV3, no build step). Keeping the band->BiquadFilter mapping in one
-// place guarantees the panel's computed curve matches the audible filters.
+// place guarantees the popup's computed curve matches the audible filters.
 
 const EQ = (() => {
   const FILTER_TYPES = [

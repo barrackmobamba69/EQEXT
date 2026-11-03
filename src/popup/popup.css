@@ -46,7 +46,7 @@ body { width: 500px; }
 .target {
   margin-left: auto;
   color: var(--ink-dim);
-  max-width: 55%;
+  max-width: 38%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -76,6 +76,42 @@ body { width: 500px; }
   border-bottom: 4px solid transparent;
   flex: none;
 }
+
+/* preset picker: prev arrow, name box with dropdown, next arrow */
+.preset {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 6px;
+  flex: none;
+}
+.pbtn,
+.pname {
+  height: 17px;
+  background: var(--chrome-raised);
+  border: 1px solid #808080;
+  border-radius: 2px;
+  color: #333;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pbtn { width: 15px; }
+.pname {
+  width: 128px;
+  gap: 4px;
+  padding: 0 5px;
+  font: inherit;
+  font-size: 10px;
+  color: var(--ink);
+  justify-content: space-between;
+}
+.pname span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pname svg { flex: none; }
+.pbtn:hover,
+.pname:hover { background: #cacaca; }
 
 /* ---------- device body ---------- */
 
@@ -130,6 +166,30 @@ body { width: 500px; }
   gap: 4px;
   min-width: 0;
 }
+
+/* SUB / BASS / ... strip, positioned on the graph's log frequency scale */
+.regions {
+  position: relative;
+  height: 14px;
+  margin: 0 1px; /* line up with the graph's inner edge (1px border) */
+}
+.regions span {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  background: var(--chrome-raised);
+  border: 1px solid #808080;
+  border-left-width: 0;
+  font-size: 8px;
+  line-height: 12px;
+  letter-spacing: 0.2px;
+  text-align: center;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.regions span:first-child { border-left-width: 1px; }
 
 #graph {
   width: 100%;

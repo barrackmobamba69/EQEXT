@@ -9,7 +9,7 @@ async function ensureOffscreen() {
   const contexts = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
   if (contexts.length > 0) return;
   await chrome.offscreen.createDocument({
-    url: 'offscreen.html',
+    url: 'src/offscreen/offscreen.html',
     reasons: ['USER_MEDIA'],
     justification: 'Runs the Web Audio graph that applies an 8-band EQ to captured tab audio.',
   });

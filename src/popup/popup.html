@@ -10,6 +10,18 @@
   <button id="power" class="led" title="Capture this tab and enable the EQ"></button>
   <span class="fold" aria-hidden="true"></span>
   <span class="title">EQ Eight</span>
+  <div class="preset">
+    <button id="presetPrev" class="pbtn" title="Previous preset">
+      <svg viewBox="0 0 6 8" width="6" height="8" aria-hidden="true"><path d="M6 0 L0 4 L6 8 Z" fill="currentColor"/></svg>
+    </button>
+    <button id="presetName" class="pname" title="Presets">
+      <span id="presetLabel">Default</span>
+      <svg viewBox="0 0 6 4" width="6" height="4" aria-hidden="true"><path d="M0 0 L6 0 L3 4 Z" fill="currentColor"/></svg>
+    </button>
+    <button id="presetNext" class="pbtn" title="Next preset">
+      <svg viewBox="0 0 6 8" width="6" height="8" aria-hidden="true"><path d="M0 0 L6 4 L0 8 Z" fill="currentColor"/></svg>
+    </button>
+  </div>
   <span id="target" class="target">not capturing</span>
 </header>
 <div class="device">
@@ -26,6 +38,7 @@
     </div>
   </div>
   <div class="center">
+    <div id="regions" class="regions"></div>
     <canvas id="graph"></canvas>
     <div id="bandRow" class="band-row"></div>
   </div>
@@ -58,7 +71,8 @@
 </div>
 <div id="status" class="status"></div>
 <div id="typeMenu" class="type-menu" hidden></div>
-<script src="shared.js"></script>
+<div id="presetMenu" class="type-menu" hidden></div>
+<script src="../shared.js"></script>
 <script src="popup.js"></script>
 </body>
 </html>

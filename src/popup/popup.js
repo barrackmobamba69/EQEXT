@@ -15,6 +15,7 @@ const state = {
   globals: { ...EQ.DEFAULT_GLOBALS },
 };
 let selected = 2; // first default-enabled bell
+let preset = { name: 'Default', dirty: false }; // shown in the title bar
 const capture = { running: false, tabId: null, tabTitle: '', sampleRate: 48000 };
 
 let spectrum = null;     // latest FFT frame from the offscreen doc
@@ -33,7 +34,7 @@ let saveTimer = null;
 function scheduleSave() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    chrome.storage.local.set({ eqState: { v: 1, bands: state.bands, globals: state.globals } });
+    chrome.storage.local.set({ eqState: { v: 1, bands: state.bands, globals: state.globals, preset } });
   }, 250);
 }
 
@@ -46,6 +47,9 @@ async function loadState() {
     state.bands = EQ.DEFAULT_BANDS.map((d, i) => EQ.sanitizeBand(eqState.bands[i], i));
   }
   state.globals = EQ.sanitizeGlobals({ ...state.globals, ...(eqState.globals || {}) });
+  if (typeof eqState.preset?.name === 'string') {
+    preset = { name: eqState.preset.name.slice(0, 40), dirty: !!eqState.preset.dirty };
+  }
 }
 
 /* ---------------- messaging ---------------- */
@@ -131,6 +135,10 @@ function stopCapture() {
 
 function bandChanged(i) {
   markDirty(true);
+  if (!preset.dirty) { // any edit after loading a preset marks it modified (*)
+    preset.dirty = true;
+    updatePresetUI();
+  }
   pushBand(i);
   scheduleSave();
   if (i === selected) updateBandUI();
@@ -299,10 +307,139 @@ function closeTypeMenu() {
 
 document.addEventListener('pointerdown', (e) => {
   if (!typeMenu.hidden && !typeMenu.contains(e.target)) closeTypeMenu();
+  if (!presetMenu.hidden && !presetMenu.contains(e.target) && !presetNameBtn.contains(e.target)) closePresetMenu();
 });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeTypeMenu();
+  if (e.key === 'Escape') { closeTypeMenu(); closePresetMenu(); }
 });
+
+/* ---------------- presets ---------------- */
+
+// Each preset lists its active bands in order (low to high); unused slots
+// fall back to that slot's default type and are switched off.
+const PRESETS = [
+  { name: '3 bands', bands: [
+    { type: 'lowshelf', freq: 120, gain: 0, q: 0.71 },
+    { type: 'peaking', freq: 1000, gain: 0, q: 0.7 },
+    { type: 'highshelf', freq: 8000, gain: 0, q: 0.71 },
+  ] },
+  { name: '20Hz + 18kHz cut', bands: [
+    { type: 'highpass', freq: 20, q: 0.71 },
+    { type: 'lowpass', freq: 18000, q: 0.71 },
+  ] },
+  { name: '30Hz + 18kHz cut', bands: [
+    { type: 'highpass', freq: 30, q: 0.71 },
+    { type: 'lowpass', freq: 18000, q: 0.71 },
+  ] },
+  { name: '40Hz + 18kHz cut', bands: [
+    { type: 'highpass', freq: 40, q: 0.71 },
+    { type: 'lowpass', freq: 18000, q: 0.71 },
+  ] },
+  { name: '40Hz cut', bands: [
+    { type: 'highpass', freq: 40, q: 0.71 },
+  ] },
+  { name: 'Default', bands: null },
+  { name: 'Kick', bands: [
+    { type: 'highpass', freq: 30, q: 0.71 },
+    { type: 'peaking', freq: 60, gain: 4, q: 1.2 },
+    { type: 'peaking', freq: 350, gain: -4, q: 1.4 },
+    { type: 'peaking', freq: 3500, gain: 3, q: 1.5 },
+    { type: 'lowpass', freq: 12000, q: 0.71 },
+  ] },
+  { name: 'Old Telephone', bands: [
+    { type: 'highpass', freq: 400, q: 1 },
+    { type: 'peaking', freq: 1500, gain: 6, q: 1 },
+    { type: 'lowpass', freq: 3400, q: 1 },
+  ] },
+  { name: 'Peaking only', bands: [50, 120, 300, 700, 1500, 3500, 7000, 14000]
+    .map((freq) => ({ type: 'peaking', freq, gain: 0, q: 1 })) },
+  { name: 'Quick Low Roll-Off', bands: [
+    { type: 'highpass', freq: 100, q: 0.71 },
+  ] },
+  { name: 'Radio', bands: [
+    { type: 'highpass', freq: 250, q: 0.8 },
+    { type: 'peaking', freq: 2500, gain: 4, q: 1.2 },
+    { type: 'lowpass', freq: 6000, q: 0.8 },
+  ] },
+  { name: 'Tight Drum Sizzle', bands: [
+    { type: 'highpass', freq: 40, q: 0.71 },
+    { type: 'peaking', freq: 300, gain: -3, q: 1.2 },
+    { type: 'peaking', freq: 5000, gain: 3, q: 1 },
+    { type: 'highshelf', freq: 10000, gain: 4, q: 0.71 },
+  ] },
+  { name: 'Vocal Presence', bands: [
+    { type: 'highpass', freq: 90, q: 0.71 },
+    { type: 'peaking', freq: 250, gain: -2, q: 1.2 },
+    { type: 'peaking', freq: 3000, gain: 3, q: 1 },
+    { type: 'highshelf', freq: 10000, gain: 2, q: 0.71 },
+  ] },
+];
+
+function presetBands(p) {
+  if (!p.bands) return EQ.DEFAULT_BANDS.map((b) => ({ ...b }));
+  return EQ.DEFAULT_BANDS.map((d, i) => (p.bands[i]
+    ? EQ.sanitizeBand({ gain: 0, ...p.bands[i], on: true }, i)
+    : { ...d, on: false, gain: 0 }));
+}
+
+// Replaces all 8 bands wholesale, so nothing from the previous preset survives.
+function applyPreset(i) {
+  const p = PRESETS[i];
+  state.bands = presetBands(p);
+  preset = { name: p.name, dirty: false };
+  const firstOn = state.bands.findIndex((b) => b.on);
+  selected = firstOn >= 0 ? firstOn : 0;
+  state.bands.forEach((_, j) => pushBand(j));
+  scheduleSave();
+  markDirty(true);
+  updateBandRow();
+  updateBandUI();
+  updatePresetUI();
+}
+
+function stepPreset(dir) {
+  let i = PRESETS.findIndex((p) => p.name === preset.name);
+  if (i < 0) i = PRESETS.findIndex((p) => p.name === 'Default');
+  applyPreset((i + dir + PRESETS.length) % PRESETS.length);
+}
+
+const presetMenu = document.getElementById('presetMenu');
+const presetNameBtn = document.getElementById('presetName');
+const presetLabel = document.getElementById('presetLabel');
+
+function updatePresetUI() {
+  presetLabel.textContent = preset.name + (preset.dirty ? ' *' : '');
+}
+
+function openPresetMenu() {
+  presetMenu.innerHTML = '';
+  PRESETS.forEach((p, i) => {
+    const item = document.createElement('button');
+    item.className = 'mitem' + (p.name === preset.name ? ' cur' : '');
+    item.textContent = p.name;
+    item.addEventListener('click', () => {
+      applyPreset(i);
+      closePresetMenu();
+    });
+    presetMenu.appendChild(item);
+  });
+  presetMenu.hidden = false;
+  const r = presetNameBtn.getBoundingClientRect();
+  const x = Math.max(4, Math.min(r.left, window.innerWidth - presetMenu.offsetWidth - 4));
+  presetMenu.style.left = x + 'px';
+  presetMenu.style.top = (r.bottom + 2) + 'px';
+}
+
+function closePresetMenu() {
+  presetMenu.hidden = true;
+}
+
+presetNameBtn.addEventListener('click', () => {
+  if (presetMenu.hidden) openPresetMenu();
+  else closePresetMenu();
+});
+document.getElementById('presetPrev').addEventListener('click', () => stepPreset(-1));
+document.getElementById('presetNext').addEventListener('click', () => stepPreset(1));
 
 /* ---------------- rotary knobs (Live style: dark cap, light notch) ------- */
 
@@ -554,6 +691,32 @@ class ResponseCurve {
 }
 
 const curve = new ResponseCurve();
+
+/* ---------------- frequency region labels above the graph ---------------- */
+
+const REGIONS = [
+  [20, 60, 'Sub', 'Sub bass'],
+  [60, 250, 'Bass', 'Bass'],
+  [250, 500, 'Lo mid', 'Low mids'],
+  [500, 2000, 'Mid', 'Mids'],
+  [2000, 4000, 'Hi mid', 'High mids'],
+  [4000, 6000, 'Prs', 'Presence'],
+  [6000, 20000, 'Treble', 'Treble'],
+];
+
+function buildRegions() {
+  const el = document.getElementById('regions');
+  // same log scale as the graph, expressed as percentages of its width
+  const pct = (f) => (Math.log10(f / EQ.FREQ_MIN) / Math.log10(EQ.FREQ_MAX / EQ.FREQ_MIN)) * 100;
+  for (const [lo, hi, label, full] of REGIONS) {
+    const s = document.createElement('span');
+    s.textContent = label;
+    s.title = full + ': ' + EQ.formatHz(lo) + ' to ' + EQ.formatHz(hi);
+    s.style.left = pct(lo) + '%';
+    s.style.width = (pct(hi) - pct(lo)) + '%';
+    el.appendChild(s);
+  }
+}
 
 /* ---------------- canvas rendering ---------------- */
 
@@ -823,6 +986,8 @@ canvas.addEventListener('dblclick', (e) => {
 (async function init() {
   await loadState();
   buildBandRow();
+  buildRegions();
+  updatePresetUI();
   updateBandRow();
   updateBandUI();
   updateGlobalUI();
